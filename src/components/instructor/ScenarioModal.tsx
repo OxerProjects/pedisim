@@ -13,10 +13,11 @@ const defaultPhase = (id: number): Phase => ({
   id: `phase_${Date.now()}_${id}`,
   name: `Phase ${id}`,
   targetVitals: {
-    heartRate: 80, spO2: 98, pco2: 40, nibpSys: 120, nibpDia: 80, abpSys: 0, abpDia: 0, map: 0, temp: 37.0
+    heartRate: 80, spO2: 98, pco2: 40, respRate: 20, nibpSys: 120, nibpDia: 80, abpSys: 0, abpDia: 0, map: 0, temp: 37.0
   },
   targetEmergencies: {
-    isAsystole: false, isVT: false, isVF: false, isPSVT: false, isPEA: false
+    isAsystole: false, isVT: false, isVF: false, isPSVT: false, isPEA: false,
+    manualExtremeAlert: false, scenarioEndedFlag: false, activeRhythm: 'NSR'
   },
   delay: 0,
   description: '',
