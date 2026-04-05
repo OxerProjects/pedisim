@@ -269,41 +269,41 @@ export default function ControlDashboard() {
   if (!roomCode) return <div className="min-h-screen bg-[#0e0e0e] text-white p-4">{langText.generating}</div>;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col h-screen w-screen bg-[#0e0e0e] text-white overflow-hidden p-2 gap-2" dir="ltr">
+    <div className="fixed inset-0 z-50 flex flex-col h-screen w-screen bg-[#0e0e0e] text-white overflow-y-auto lg:overflow-hidden p-2 gap-2" dir="ltr">
       {/* Top Bar */}
-      <div className="h-[8%] border border-[#313131] rounded flex justify-between items-center px-6 bg-[#1a1a1a]">
-        <div className="flex items-center gap-4">
-           <img src="/LogoWhite.png" alt="PEDISIM" className="h-8 object-contain" />
+      <div className="flex-none min-h-[60px] border border-[#313131] rounded flex justify-between items-center px-2 lg:px-6 py-2 bg-[#1a1a1a] flex-wrap gap-2">
+        <div className="flex items-center gap-2 lg:gap-4 w-full md:w-auto justify-center md:justify-start">
+           <img src="/LogoWhite.png" alt="PEDISIM" className="h-6 lg:h-8 object-contain" />
         </div>
-        <div className="flex border border-[#640606] rounded-lg px-6 py-1 h-10 items-center justify-center">
+        <div className="flex border border-[#640606] rounded-lg px-3 lg:px-6 py-1 h-8 lg:h-10 items-center justify-center flex-1 md:flex-none">
             {anyAlarm ? (
-              <span className="text-red-500 font-bold animate-pulse">{langText.alarmHigh}</span>
+              <span className="text-red-500 font-bold text-xs lg:text-base animate-pulse">{langText.alarmHigh}</span>
             ) : (
-              <span className="text-gray-500 font-bold opacity-30">{langText.noAlerts}</span>
+              <span className="text-gray-500 font-bold text-xs lg:text-base opacity-30">{langText.noAlerts}</span>
             )}
         </div>
-        <div className="flex flex-col items-center cursor-pointer hover:bg-gray-800 px-4 py-1 rounded transition" onClick={copyCode} title="Copy Room Code">
-           <span className="text-gray-400 text-xs">{langText.roomCode}</span>
-           <span className="text-3xl font-mono tracking-widest text-[#6CFF65]">{roomCode}</span>
+        <div className="flex flex-col items-center cursor-pointer hover:bg-gray-800 px-2 lg:px-4 py-1 rounded transition" onClick={copyCode} title="Copy Room Code">
+           <span className="text-gray-400 text-[10px] lg:text-xs">{langText.roomCode}</span>
+           <span className="text-xl lg:text-3xl font-mono tracking-widest text-[#6CFF65]">{roomCode}</span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 lg:gap-4 w-full md:w-auto justify-end">
           <div className="flex flex-col items-end">
-            <span className="text-xl font-mono">{new Date().toLocaleTimeString("en-US", { hour12: false })}</span>
-            <span className="text-xs text-gray-500">
+            <span className="text-sm lg:text-xl font-mono">{new Date().toLocaleTimeString("en-US", { hour12: false })}</span>
+            <span className="text-[10px] lg:text-xs text-gray-500">
                {isConnected ? (peers > 1 ? `${langText.connected} ${peers - 1}` : langText.waiting) : langText.disconnected}
             </span>
           </div>
-          <button onClick={toggleLang} className="text-gray-400 border border-gray-600 rounded px-2 py-1 hover:bg-gray-800 transition">EN/HE</button>
+          <button onClick={toggleLang} className="text-gray-400 border border-gray-600 rounded px-2 py-1 text-xs lg:text-base hover:bg-gray-800 transition">EN/HE</button>
           <LogoutButton />
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-3 gap-2 h-[90%] min-h-0">
+      <div className="flex-none lg:flex-1 flex flex-col lg:grid lg:grid-cols-3 gap-2 lg:h-[90%] min-h-0 pb-10 lg:pb-0">
         
         {/* Left Column (Start): Logs & Imaging */}
         <div className="flex flex-col gap-2 min-h-0">
            {/* Logs */}
-           <div className="flex-[2] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-0">
+           <div className="flex-[2] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-[300px] lg:min-h-0">
               <h2 className="text-xl font-bold mb-4">{langText.logs}</h2>
               <div className="flex-1 overflow-y-auto bg-black p-2 rounded text-sm font-mono border border-gray-800 flex flex-col gap-1 [&::-webkit-scrollbar]:hidden">
                  {[...systemLogs].reverse().map((log, i) => (
@@ -315,7 +315,7 @@ export default function ControlDashboard() {
            </div>
            
            {/* Imaging */}
-           <div className="flex-[1] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-0">
+           <div className="flex-[1] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-[220px] lg:min-h-0">
               <h2 className="text-xl font-bold mb-4">{langText.imagingMsg}</h2>
               <div className="grid grid-cols-2 gap-2 flex-1">
                  <button onClick={() => broadcastAction('show_imaging', { url: '/imaging/mock_xray1.jpg' })} className="bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-400 font-bold transition">X-Ray Chest</button>
@@ -333,7 +333,7 @@ export default function ControlDashboard() {
         {/* Center Column: Arrhythmias & Scenarios */}
         <div className="flex flex-col gap-2 min-h-0">
            {/* Emergency / Arrhythmias Buttons */}
-           <div className="flex-[1] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col">
+           <div className="flex-[1] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-[200px] lg:min-h-0">
               <h2 className="text-xl font-bold mb-4">{langText.emergencies}</h2>
               <div className="flex flex-col gap-2">
                  {/* Quick Shortcuts */}
@@ -390,7 +390,7 @@ export default function ControlDashboard() {
            </div>
 
            {/* Scenarios */}
-           <div className="flex-[2] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden min-h-0">
+           <div className="flex-[2] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden min-h-[350px] lg:min-h-0">
               <div className="flex justify-between items-center mb-4">
                  <h2 className="text-xl font-bold">{langText.scenarios}</h2>
                  <button onClick={() => { setScenarioToEdit(null); setShowScenarioModal(true); }} className="bg-[#4296E2] hover:bg-blue-600 px-3 py-1 rounded text-sm font-bold shadow">{langText.newScenario}</button>
@@ -469,7 +469,7 @@ export default function ControlDashboard() {
 
         {/* Right Column (End): Vital Signs Controls */}
         <div className="flex flex-col gap-2 min-h-0">
-           <div className="flex-1 border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-0">
+           <div className="flex-1 border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-[650px] lg:min-h-0">
               <div className="flex justify-between items-center mb-6">
                  <h2 className="text-xl font-bold">{langText.vitalControls}</h2>
                  <select 
