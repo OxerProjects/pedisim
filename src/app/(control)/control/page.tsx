@@ -8,7 +8,8 @@ import { useLanguageStore } from "@/stores/languageStore";
 import { useScenariosStore, Scenario, Phase } from "@/stores/scenariosStore";
 import { ScenarioModal } from "@/components/instructor/ScenarioModal";
 import { ImagingModal } from "@/components/instructor/ImagingModal";
-import { Play, Pause, Square, ChevronRight, Image as ImageIcon, Trash2 } from "lucide-react";
+import { Play, Pause, Square, ChevronRight, Image as ImageIcon, Trash2, X } from "lucide-react";
+import { useImagingStore } from "@/stores/imagingStore";
 
 const t = {
   HE: {
@@ -70,13 +71,25 @@ export default function ControlDashboard() {
   const { isConnected, broadcastState, peers, broadcastAction } = useRealtimeSimulator();
   const { lang, toggleLang } = useLanguageStore();
   const { scenarios, deleteScenario } = useScenariosStore();
+  const { pinnedImages, unpinImage } = useImagingStore();
 
   const [delay, setDelay] = useState("0");
   const timeoutRefs = useRef<{ [key: string]: NodeJS.Timeout }>({});
 
   const [targetVitals, setTargetVitals] = useState<Vitals>(vitals);
+  const [pendingVitals, setPendingVitals] = useState<Vitals>(vitals);
+  const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const vitalsRef = useRef(vitals);
+  
   useEffect(() => { vitalsRef.current = vitals; }, [vitals]);
+  
+  // Sync the sliders with actual vitals unless the user is actively changing them
+  useEffect(() => {
+    if (!hasPendingChanges && JSON.stringify(vitals) !== JSON.stringify(targetVitals)) {
+        setTargetVitals(vitals);
+        setPendingVitals(vitals);
+    }
+  }, [vitals, hasPendingChanges, targetVitals]);
 
   // Scenario UI Modals
   const [showScenarioModal, setShowScenarioModal] = useState(false);
@@ -114,7 +127,11 @@ export default function ControlDashboard() {
   useEffect(() => {
     if (isConnected) {
       const cleanVitals = { ...vitals };
-      for (const k in cleanVitals) cleanVitals[k as keyof Vitals] = Math.round(cleanVitals[k as keyof Vitals]);
+      for (const k in cleanVitals) {
+        if (typeof cleanVitals[k as keyof Vitals] === 'number') {
+           cleanVitals[k as keyof Vitals] = Math.round(cleanVitals[k as keyof Vitals] as number) as never;
+        }
+      }
       broadcastState(cleanVitals, emergencies);
     }
   }, [vitals, emergencies, isConnected]);
@@ -133,14 +150,20 @@ export default function ControlDashboard() {
         const current = nextV[key];
         if (current !== target) {
           changed = true;
-          const diff = target - current;
-          const step = Math.max(0.1, Math.abs(diff) / (d * 10)); 
-          if (Math.abs(diff) <= step) {
-            nextV[key] = target;
+          if (typeof target === 'boolean') {
+             (nextV as any)[key] = target;
           } else {
-            nextV[key] += Math.sign(diff) * step;
+             const tNum = target as number;
+             const cNum = current as number;
+             const diff = tNum - cNum;
+             const step = Math.max(0.1, Math.abs(diff) / (d * 10)); 
+             if (Math.abs(diff) <= step) {
+               (nextV as any)[key] = tNum;
+             } else {
+               (nextV as any)[key] = cNum + Math.sign(diff) * step;
+             }
+             (nextV as any)[key] = Math.round((nextV as any)[key] * 10) / 10;
           }
-          nextV[key] = Math.round(nextV[key] * 10) / 10;
         }
       }
 
@@ -153,32 +176,37 @@ export default function ControlDashboard() {
   }, [delay, targetVitals, updateVitals]);
 
   const handleVitalChange = (key: keyof Vitals, val: number) => {
-    let nextMap: number | undefined;
-
-    setTargetVitals(prev => {
+    setHasPendingChanges(true);
+    setPendingVitals(prev => {
       const next = { ...prev, [key]: val };
       
       const useAbp = next.abpSys > 0;
       const sys = useAbp ? next.abpSys : next.nibpSys;
       const dia = useAbp ? next.abpDia : next.nibpDia;
       
-      nextMap = Math.round((sys + 2 * dia) / 3);
-      next.map = nextMap;
+      next.map = Math.round((sys + 2 * dia) / 3);
       
       return next;
     });
+  };
+
+  const handleVisibilityChange = (key: keyof Vitals, checked: boolean) => {
+    setHasPendingChanges(true);
+    setPendingVitals(prev => ({ ...prev, [key]: checked }));
+  };
+
+  const applyVitalChanges = () => {
+    setTargetVitals(pendingVitals);
+    setHasPendingChanges(false);
     
     if (delay === "0") {
-       const updates: Partial<Vitals> = { [key]: val };
-       // Since state updates are batched, we use the pre-calculated nextMap
-       if (nextMap !== undefined) updates.map = nextMap;
-       updateVitals(updates);
+       updateVitals(pendingVitals);
     }
     
-    if (timeoutRefs.current[key]) clearTimeout(timeoutRefs.current[key]);
-    timeoutRefs.current[key] = setTimeout(() => {
-        addSystemLog(`${langText.change} ${key.toUpperCase()} ${langText.to}${val}`);
-    }, 2000);
+    // Log changes
+    (Object.keys(pendingVitals) as (keyof Vitals)[]).forEach(k => {
+        if(pendingVitals[k] !== vitalsRef.current[k]) addSystemLog(`${langText.change} ${k.toUpperCase()} ${langText.to}${pendingVitals[k]}`);
+    });
   };
 
   const toggleEmergency = (key: keyof EmergencyState, name: string) => {
@@ -195,7 +223,27 @@ export default function ControlDashboard() {
        isVT: rhythm === 'VT',
        isPSVT: rhythm === 'SVT'
     });
-    addSystemLog(`Rhythm changed to ${rhythm}`);
+    
+    // Auto-adjust default variables for specific rhythms
+    const overrides: Partial<Vitals> = {};
+    if (rhythm === 'VT') overrides.heartRate = 160;
+    if (rhythm === 'CHB') overrides.heartRate = 35;
+    if (rhythm === 'AFib') overrides.heartRate = 150;
+    if (rhythm === 'AFlutter') overrides.heartRate = 100;
+    if (rhythm === 'AVBlock1') overrides.heartRate = 60;
+    if (rhythm === 'Torsades') {
+        overrides.heartRate = 220;
+        overrides.spO2 = 82;
+        overrides.showSpO2 = false; // Flatline SpO2
+    }
+    
+    if (Object.keys(overrides).length > 0) {
+        setTargetVitals(prev => ({ ...prev, ...overrides }));
+        setPendingVitals(prev => ({ ...prev, ...overrides }));
+        updateVitals(overrides);
+    }
+
+    addSystemLog(lang === "HE" ? `הוחלף קצב ל-${rhythm}` : `Rhythm changed to ${rhythm}`);
   };
 
   const copyCode = () => {
@@ -212,13 +260,14 @@ export default function ControlDashboard() {
      setActivePhaseIndex(0);
      setScenarioTimer(0);
      scenarioStartLogIndex.current = systemLogs.length; // Mark where logs start
-     updateEmergencies({ scenarioEndedFlag: false }); // Unfreeze monitor
+     updateEmergencies({ scenarioEndedFlag: false, isPaused: false }); // Unfreeze monitor
      
      if (scenarioTimerRef.current) clearInterval(scenarioTimerRef.current);
      scenarioTimerRef.current = setInterval(() => {
         setScenarioTimer(prev => prev + 1);
      }, 1000);
      
+     addSystemLog(lang === "HE" ? `התחלת תרחיש: ${s.name}` : `Scenario Started: ${s.name}`);
      runPhase(s.phases[0]);
   };
 
@@ -254,6 +303,8 @@ export default function ControlDashboard() {
       addSystemLog(`[Phase Started] Object:${phase.name}`);
       setDelay(phase.delay.toString());
       setTargetVitals(phase.targetVitals);
+      setPendingVitals(phase.targetVitals);
+      setHasPendingChanges(false);
       updateEmergencies(phase.targetEmergencies);
       if (phase.delay === 0) {
          updateVitals(phase.targetVitals);
@@ -298,7 +349,7 @@ export default function ControlDashboard() {
         </div>
       </div>
 
-      <div className="flex-none lg:flex-1 flex flex-col lg:grid lg:grid-cols-3 gap-2 lg:h-[90%] min-h-0 pb-10 lg:pb-0">
+      <div className="flex-none lg:flex-1 flex flex-col lg:grid lg:grid-cols-3 gap-4 lg:h-[90%] min-h-0 pb-10 lg:pb-0">
         
         {/* Left Column (Start): Logs & Imaging */}
         <div className="flex flex-col gap-2 min-h-0">
@@ -317,16 +368,29 @@ export default function ControlDashboard() {
            {/* Imaging */}
            <div className="flex-[1] border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-[220px] lg:min-h-0">
               <h2 className="text-xl font-bold mb-4">{langText.imagingMsg}</h2>
-              <div className="grid grid-cols-2 gap-2 flex-1">
-                 <button onClick={() => broadcastAction('show_imaging', { url: '/imaging/mock_xray1.jpg' })} className="bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-400 font-bold transition">X-Ray Chest</button>
-                 <button onClick={() => broadcastAction('show_imaging', { url: '/imaging/mock_ct1.jpg' })} className="bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-400 font-bold transition">CT Head</button>
-                 <button onClick={() => broadcastAction('show_imaging', { url: '/imaging/mock_us1.jpg' })} className="bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-400 font-bold transition">US FAST</button>
-                 <button onClick={() => broadcastAction('show_imaging', { url: '/imaging/mock_ecg1.jpg' })} className="bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-400 font-bold transition">ECG 12-lead</button>
-                 <button onClick={() => broadcastAction('show_imaging', { url: '/imaging/mock_xray2.jpg' })} className="bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-400 font-bold transition">CXR AP</button>
-                 <button onClick={() => setShowImagingModal(true)} className="bg-[#6b42e2] hover:bg-purple-600 px-2 py-1 rounded text-white text-xs font-bold shadow transition flex items-center justify-center gap-1">
-                    <ImageIcon size={14} /> Full Menu
+              <div className="grid grid-cols-2 gap-2 flex-1 items-start content-start overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden">
+                 {pinnedImages.map(img => (
+                    <div key={img.id} className="relative group">
+                       <button onClick={() => broadcastAction('show_imaging', { url: img.url, type: img.type })} className="w-full bg-gray-800 hover:bg-gray-700 text-xs rounded text-gray-300 font-bold transition py-2 px-1 truncate flex items-center justify-center p-2" title={img.name}>
+                          <span className="truncate max-w-[80%]">{img.name}</span>
+                       </button>
+                       <button onClick={(e) => { e.stopPropagation(); unpinImage(img.id); }} className="absolute right-1 top-1.5 opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 bg-gray-800 rounded-full transition" title="Unpin shortcut">
+                          <X size={14} />
+                       </button>
+                    </div>
+                 ))}
+                 {pinnedImages.length === 0 && (
+                    <div className="col-span-1 flex items-center justify-center text-[10px] text-gray-500 text-center leading-tight py-2 border border-gray-800 border-dashed rounded">
+                       {lang === 'HE' ? 'הצמד דימות לגישה מהירה מהתפריט המלא' : 'Pin items from Full Menu'}
+                    </div>
+                 )}
+                 <button onClick={() => setShowImagingModal(true)} className="bg-[#6b42e2] hover:bg-purple-600 px-2 py-2 rounded text-white text-xs font-bold shadow transition flex items-center justify-center gap-1">
+                    <ImageIcon size={14} /> {lang === 'HE' ? 'תפריט מלא' : 'Full Menu'}
                  </button>
               </div>
+              <button onClick={() => broadcastAction('show_imaging', null)} className="mt-2 bg-red-900/30 hover:bg-red-900/60 border border-red-800/50 px-2 py-2 rounded text-red-500 hover:text-red-400 text-xs font-bold shadow transition flex items-center justify-center gap-1">
+                 <X size={14} /> {lang === 'HE' ? 'סגירת דימות במסך הסימולציה' : 'Close Image on Monitor'}
+              </button>
            </div>
         </div>
 
@@ -359,10 +423,8 @@ export default function ControlDashboard() {
                        <option value="AVBlock2_I">2nd Degree Type I (Wenckebach)</option>
                        <option value="AVBlock2_II">2nd Degree Type II</option>
                        <option value="CHB">3rd Degree AV Block (Complete)</option>
-                       <option value="BBB">Bundle Branch Block (Wide QRS)</option>
                     </optgroup>
                     <optgroup label="Atrial Arrhythmias">
-                       <option value="PAC">PACs (Premature Atrial)</option>
                        <option value="AFib">Atrial Fibrillation</option>
                        <option value="AFlutter">Atrial Flutter</option>
                     </optgroup>
@@ -371,7 +433,6 @@ export default function ControlDashboard() {
                        <option value="SVT">SVT (Supraventricular Tachy)</option>
                     </optgroup>
                     <optgroup label="Ventricular Arrhythmias">
-                       <option value="PVC">PVCs (Premature Ventricular)</option>
                        <option value="Bigeminy">Ventricular Bigeminy</option>
                        <option value="VT">Ventricular Tachycardia (Monomorphic)</option>
                        <option value="Torsades">Torsades de Pointes (Polymorphic)</option>
@@ -383,9 +444,23 @@ export default function ControlDashboard() {
                     </optgroup>
                  </select>
                  
-                 <button onClick={() => toggleEmergency("manualExtremeAlert", "Extreme Alert")} className={`mt-2 py-2 w-full rounded font-bold transition ${emergencies.manualExtremeAlert ? 'bg-orange-600 text-white animate-pulse' : 'bg-orange-900/50 text-orange-400 border border-orange-800 hover:bg-orange-900/80 shadow-[0_0_10px_orange]'}`}>
-                    Extreme Alert
-                 </button>
+                 <div className="flex flex-wrap gap-2 mt-2">
+                    <button onClick={() => toggleEmergency("manualExtremeAlert", "Extreme Alert")} className={`flex-1 py-1 px-2 rounded font-bold text-xs transition ${emergencies.manualExtremeAlert ? 'bg-orange-600 text-white animate-pulse' : 'bg-orange-900/50 text-orange-400 border border-orange-800 hover:bg-orange-900/80'}`}>
+                       Extreme Alert
+                    </button>
+                    <button onClick={() => toggleEmergency("isPVC", "PVC Toggle")} className={`flex-1 py-1 px-2 rounded font-bold text-xs transition ${emergencies.isPVC ? 'bg-blue-600 text-white shadow-[0_0_10px_blue]' : 'bg-blue-900/50 text-blue-400 border border-blue-800 hover:bg-blue-900/80'}`}>
+                       PVC Enable
+                    </button>
+                    <button onClick={() => toggleEmergency("isPaused", "Freeze Monitor")} className={`flex-1 py-1 px-2 rounded font-bold text-xs transition ${emergencies.isPaused ? 'bg-indigo-600 text-white shadow-[0_0_10px_indigo]' : 'bg-indigo-900/50 text-indigo-400 border border-indigo-800 hover:bg-indigo-900/80'}`}>
+                       {emergencies.isPaused ? 'Unfreeze' : 'Freeze'}
+                    </button>
+                    <button onClick={() => toggleEmergency("showProtocols", "Show Protocols")} className={`flex-1 py-1 px-2 rounded font-bold text-xs transition ${emergencies.showProtocols ? 'bg-emerald-600 text-white shadow-[0_0_10px_emerald]' : 'bg-emerald-900/50 text-emerald-400 border border-emerald-800 hover:bg-emerald-900/80'}`}>
+                       {emergencies.showProtocols ? 'Hide Protocols' : 'Show Protocols'}
+                    </button>
+                    <button onClick={() => toggleEmergency("isWideQRS", "Wide QRS toggle")} className={`flex-1 py-1 px-2 rounded font-bold text-xs transition ${emergencies.isWideQRS ? 'bg-purple-600 text-white shadow-[0_0_10px_purple]' : 'bg-purple-900/50 text-purple-400 border border-purple-800 hover:bg-purple-900/80'}`}>
+                       Wide QRS
+                    </button>
+                 </div>
               </div>
            </div>
 
@@ -448,8 +523,13 @@ export default function ControlDashboard() {
                                              <button onClick={nextPhase} disabled={activePhaseIndex + 1 === s.phases.length} className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2 rounded flex items-center justify-center gap-1">
                                                 Next Phase <ChevronRight size={14} />
                                              </button>
-                                             <button onClick={() => addSystemLog("System Paused")} className="flex-none bg-yellow-600 hover:bg-yellow-500 text-black text-xs font-bold px-3 py-2 rounded flex items-center gap-1">
-                                                <Pause size={14} /> Pause
+                                             <button onClick={() => {
+                                                const newState = !emergencies.isPaused;
+                                                updateEmergencies({ isPaused: newState });
+                                                addSystemLog(newState ? "System Paused" : "System Resumed");
+                                             }} className={`flex-none text-black text-xs font-bold px-3 py-2 rounded flex items-center gap-1 ${emergencies.isPaused ? 'bg-indigo-400 hover:bg-indigo-300' : 'bg-yellow-600 hover:bg-yellow-500'}`}>
+                                                {emergencies.isPaused ? <Play size={14} /> : <Pause size={14} />} 
+                                                {emergencies.isPaused ? (lang === "HE" ? 'השב' : 'Resume') : (lang === "HE" ? 'השהה' : 'Pause')}
                                              </button>
                                              <button onClick={stopScenario} className="flex-none bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3 py-2 rounded flex items-center gap-1">
                                                 <Square size={14} /> End
@@ -469,11 +549,11 @@ export default function ControlDashboard() {
 
         {/* Right Column (End): Vital Signs Controls */}
         <div className="flex flex-col gap-2 min-h-0">
-           <div className="flex-1 border border-[#313131] rounded bg-[#1a1a1a] p-4 flex flex-col min-h-[650px] lg:min-h-0">
-              <div className="flex justify-between items-center mb-6">
-                 <h2 className="text-xl font-bold">{langText.vitalControls}</h2>
+           <div className="flex-1 border border-[#313131] rounded-2xl bg-[#1a1a1a] p-5 flex flex-col min-h-[650px] lg:min-h-0 shadow-lg">
+              <div className="flex justify-between items-center mb-6 border-b border-[#313131] pb-4">
+                 <h2 className="text-xl font-bold text-white tracking-wide">{langText.vitalControls}</h2>
                  <select 
-                    className="bg-black border border-gray-700 rounded px-2 py-1 text-sm outline-none cursor-pointer hover:bg-gray-800 transition"
+                    className="bg-[#222] border border-[#444] rounded-lg px-3 py-1.5 text-sm outline-none cursor-pointer hover:bg-[#333] transition focus:border-blue-500 shadow-inner text-white"
                     value={delay}
                     onChange={(e) => setDelay(e.target.value)}
                  >
@@ -484,30 +564,49 @@ export default function ControlDashboard() {
                  </select>
               </div>
 
-              <div className="flex-1 flex flex-col gap-6 overflow-y-auto pr-2 [&::-webkit-scrollbar]:hidden">
-                 <VitalSlider label="HR" value={targetVitals.heartRate} min={0} max={300} color="#6CFF65" onChange={(v) => handleVitalChange("heartRate", v)} />
-                 <VitalSlider label="SpO2" value={targetVitals.spO2} min={0} max={100} color="#65CCFF" onChange={(v) => handleVitalChange("spO2", v)} />
-                 <VitalSlider label="PCO2" value={targetVitals.pco2} min={0} max={65} color="#FFED65" onChange={(v) => handleVitalChange("pco2", v)} />
-                 <VitalSlider label="RR" value={targetVitals.respRate || 20} min={0} max={80} color="#FFD166" onChange={(v) => handleVitalChange("respRate", v)} />
-                 
-                 <div className="border border-gray-800 p-3 rounded bg-black/30">
-                    <div className="text-white font-bold mb-2">NIBP</div>
-                    <VitalSlider label="Sys" value={targetVitals.nibpSys} min={0} max={220} color="#ffffff" onChange={(v) => handleVitalChange("nibpSys", v)} />
-                    <VitalSlider label="Dia" value={targetVitals.nibpDia} min={0} max={140} color="#aaaaaa" onChange={(v) => handleVitalChange("nibpDia", v)} />
-                 </div>
+              <div className="flex-1 flex flex-col min-h-0">
+                  <div className="flex-1 overflow-y-auto pr-3 flex flex-col gap-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-[#111] [&::-webkit-scrollbar-thumb]:bg-[#444] [&::-webkit-scrollbar-thumb]:rounded-full pb-6">
+                     <VitalSlider label="HR" visible={pendingVitals.showHR} onVisibilityChange={(c) => handleVisibilityChange("showHR", c)} value={pendingVitals.heartRate} min={0} max={300} color="#6CFF65" onChange={(v) => handleVitalChange("heartRate", v)} />
+                     <VitalSlider label="SpO2" visible={pendingVitals.showSpO2} onVisibilityChange={(c) => handleVisibilityChange("showSpO2", c)} value={pendingVitals.spO2} min={0} max={100} color="#65CCFF" onChange={(v) => handleVitalChange("spO2", v)} />
+                     <VitalSlider label="PCO2" visible={pendingVitals.showPCO2} onVisibilityChange={(c) => handleVisibilityChange("showPCO2", c)} value={pendingVitals.pco2} min={0} max={65} color="#FFED65" onChange={(v) => handleVitalChange("pco2", v)} />
+                     <VitalSlider label="RR" visible={pendingVitals.showRR} onVisibilityChange={(c) => handleVisibilityChange("showRR", c)} value={pendingVitals.respRate || 20} min={0} max={80} color="#FFD166" onChange={(v) => handleVitalChange("respRate", v)} />
+                     
+                     <div className={`border border-gray-800 p-4 rounded-xl bg-black/20 shadow-inner transition ${pendingVitals.showNIBP === false ? 'opacity-40 grayscale' : ''}`}>
+                        <div className="flex items-center gap-2 mb-4">
+                           <input type="checkbox" checked={pendingVitals.showNIBP !== false} onChange={(e) => handleVisibilityChange("showNIBP", e.target.checked)} className="cursor-pointer w-4 h-4 accent-blue-500 rounded" />
+                           <div className="text-white font-bold tracking-wide">NIBP</div>
+                        </div>
+                        <div className="flex flex-col gap-4">
+                           <VitalSlider label="Sys" value={pendingVitals.nibpSys} min={0} max={220} color="#ffffff" onChange={(v) => handleVitalChange("nibpSys", v)} disabled={pendingVitals.showNIBP === false} />
+                           <VitalSlider label="Dia" value={pendingVitals.nibpDia} min={0} max={140} color="#aaaaaa" onChange={(v) => handleVitalChange("nibpDia", v)} disabled={pendingVitals.showNIBP === false} />
+                        </div>
+                     </div>
 
-                 <div className="border border-gray-800 p-3 rounded bg-black/30">
-                    <div className="text-[#FF6565] font-bold mb-2">ABP</div>
-                    <VitalSlider label="Sys" value={targetVitals.abpSys} min={0} max={220} color="#FF6565" onChange={(v) => handleVitalChange("abpSys", v)} />
-                    <VitalSlider label="Dia" value={targetVitals.abpDia} min={0} max={140} color="#bb4444" onChange={(v) => handleVitalChange("abpDia", v)} />
-                 </div>
+                     <div className={`border border-gray-800 p-4 rounded-xl bg-black/20 shadow-inner transition ${pendingVitals.showABP === false ? 'opacity-40 grayscale' : ''}`}>
+                        <div className="flex items-center gap-2 mb-4">
+                           <input type="checkbox" checked={pendingVitals.showABP !== false} onChange={(e) => handleVisibilityChange("showABP", e.target.checked)} className="cursor-pointer w-4 h-4 accent-blue-500 rounded" />
+                           <div className="text-[#FF6565] font-bold tracking-wide">ABP</div>
+                        </div>
+                        <div className="flex flex-col gap-4">
+                           <VitalSlider label="Sys" value={pendingVitals.abpSys} min={0} max={220} color="#FF6565" onChange={(v) => handleVitalChange("abpSys", v)} disabled={pendingVitals.showABP === false} />
+                           <VitalSlider label="Dia" value={pendingVitals.abpDia} min={0} max={140} color="#bb4444" onChange={(v) => handleVitalChange("abpDia", v)} disabled={pendingVitals.showABP === false} />
+                        </div>
+                     </div>
 
-                 <div className="bg-black/30 p-3 rounded flex justify-between items-center">
-                    <span className="font-bold" style={{color: '#FF65E3'}}>MAP (Calc)</span>
-                    <span className="text-white text-xl font-bold">{targetVitals.map}</span>
-                 </div>
-                 
-                 <VitalSlider label="TEMP" value={targetVitals.temp} min={25} max={43} color="#EB9B2B" onChange={(v) => handleVitalChange("temp", v)} />
+                     <div className="bg-black/40 p-3 rounded-lg flex justify-between items-center border border-[#222]">
+                        <span className="font-bold text-sm tracking-wide" style={{color: '#FF65E3'}}>MAP (Calc)</span>
+                        <span className="text-white text-xl font-bold bg-[#111] px-4 py-1 rounded-md">{pendingVitals.map}</span>
+                     </div>
+                     
+                     <VitalSlider label="TEMP" visible={pendingVitals.showTemp} onVisibilityChange={(c) => handleVisibilityChange("showTemp", c)} value={pendingVitals.temp} min={25} max={43} color="#EB9B2B" onChange={(v) => handleVitalChange("temp", v)} />
+                  </div>
+
+                  {/* Static Apply Button Out of Flow */}
+                  <div className="pt-4 mt-2 border-t border-[#313131]">
+                     <button onClick={applyVitalChanges} disabled={!hasPendingChanges} className={`w-full font-bold py-3 text-lg rounded-xl shadow-lg transition active:scale-95 ${hasPendingChanges ? 'bg-green-600 hover:bg-green-500 text-white animate-pulse shadow-[0_0_15px_rgba(34,197,94,0.4)]' : 'bg-[#222] border border-[#444] text-gray-500 cursor-not-allowed'}`}>
+                        {lang === 'HE' ? 'החל שינויים' : 'APPLY CHANGES'}
+                     </button>
+                  </div>
               </div>
            </div>
         </div>
@@ -614,16 +713,23 @@ export default function ControlDashboard() {
 }
 
 // Reusable Slider component for the Instructor
-function VitalSlider({ label, value, min, max, color, onChange }: { label: string, value: number, min: number, max: number, color: string, onChange: (val: number) => void }) {
+function VitalSlider({ label, value, visible, disabled, min, max, color, onChange, onVisibilityChange }: { label: string, value: number, visible?: boolean, disabled?: boolean, min: number, max: number, color: string, onChange: (val: number) => void, onVisibilityChange?: (checked: boolean) => void }) {
+   const isDisabled = disabled || visible === false;
    return (
-      <div className="flex flex-col gap-1">
+      <div className={`flex flex-col gap-1 transition-all ${isDisabled ? 'opacity-40 grayscale' : 'hover:scale-[1.01]'}`}>
          <div className="flex justify-between items-center text-sm">
-            <span style={{ color }} className="font-bold">{label}</span>
+            <div className="flex items-center gap-2">
+               {onVisibilityChange && (
+                  <input type="checkbox" checked={visible !== false} onChange={(e) => onVisibilityChange(e.target.checked)} className="cursor-pointer w-4 h-4 accent-blue-500 rounded border-gray-700" />
+               )}
+               <span style={{ color }} className={`font-bold tracking-wide ${visible === false ? 'line-through text-gray-500' : ''}`}>{label}</span>
+            </div>
             <input 
                type="number" 
                value={value} 
                onChange={(e) => onChange(Number(e.target.value))}
-               className="w-16 bg-black border border-gray-700 text-center rounded text-white outline-none"
+               disabled={isDisabled}
+               className="w-16 bg-[#111] border border-gray-700 text-center rounded text-white outline-none disabled:opacity-50 focus:border-blue-500 transition shadow-inner"
             />
          </div>
          <input 
@@ -632,9 +738,9 @@ function VitalSlider({ label, value, min, max, color, onChange }: { label: strin
             max={max} 
             value={value} 
             onChange={(e) => onChange(Number(e.target.value))}
-            className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
-            // Simple inline style to color the left part of the slider
-            style={{ backgroundImage: `linear-gradient(${color}, ${color})`, backgroundSize: `${((value - min) * 100) / (max - min)}% 100%`, backgroundRepeat: 'no-repeat' }}
+            disabled={isDisabled}
+            className="w-full h-2.5 rounded-full appearance-none bg-gray-800 disabled:cursor-not-allowed outline-none shadow-inner transition-colors"
+            style={{ backgroundImage: `linear-gradient(${color}, ${color})`, backgroundSize: `${((value - min) * 100) / (max - min)}% 100%`, backgroundRepeat: 'no-repeat', cursor: isDisabled ? 'not-allowed' : 'pointer' }}
          />
       </div>
    )

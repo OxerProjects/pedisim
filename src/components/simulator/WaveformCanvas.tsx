@@ -23,6 +23,9 @@ interface WaveformCanvasProps {
   abpDia?: number;
   nibpSys?: number;
   map?: number;
+  isPaused?: boolean;
+  isPVC?: boolean;
+  isWideQRS?: boolean;
 }
 
 export function WaveformCanvas({
@@ -46,13 +49,16 @@ export function WaveformCanvas({
   abpDia = 80,
   nibpSys = 120,
   map = 70,
+  isPaused = false,
+  isPVC = false,
+  isWideQRS = false,
 }: WaveformCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const propsRef = useRef({ heartRate, respiratoryRate, amplitude, speed, isVT, isVF, isAsystole, activeRhythm, syncMode, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, abpSys, abpDia, nibpSys, map });
+  const propsRef = useRef({ heartRate, respiratoryRate, amplitude, speed, isVT, isVF, isAsystole, activeRhythm, syncMode, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, abpSys, abpDia, nibpSys, map, isPaused, isPVC, isWideQRS });
   useEffect(() => {
-    propsRef.current = { heartRate, respiratoryRate, amplitude, speed, isVT, isVF, isAsystole, activeRhythm, syncMode, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, abpSys, abpDia, nibpSys, map };
-  }, [heartRate, respiratoryRate, amplitude, speed, isVT, isVF, isAsystole, activeRhythm, syncMode, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, abpSys, abpDia, nibpSys, map]);
+    propsRef.current = { heartRate, respiratoryRate, amplitude, speed, isVT, isVF, isAsystole, activeRhythm, syncMode, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, abpSys, abpDia, nibpSys, map, isPaused, isPVC, isWideQRS };
+  }, [heartRate, respiratoryRate, amplitude, speed, isVT, isVF, isAsystole, activeRhythm, syncMode, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, abpSys, abpDia, nibpSys, map, isPaused, isPVC, isWideQRS]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -92,7 +98,7 @@ export function WaveformCanvas({
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const generateY = (t: number) => {
-      const { heartRate, respiratoryRate, amplitude, isVT, isVF, isAsystole, activeRhythm, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, map } = propsRef.current;
+      const { heartRate, respiratoryRate, amplitude, isVT, isVF, isAsystole, activeRhythm, cprActive, cprRate, pacerActive, pacerRate, pacerOutput, map, isWideQRS } = propsRef.current;
       const height = canvas.height;
       const baseline = height / 2;
       const baseAmp = (height / 2) * 0.8 * amplitude;
@@ -116,7 +122,7 @@ export function WaveformCanvas({
         const cprDuration = 60 / Math.max(10, cprRate);
         const cprCycle = (t % cprDuration) / cprDuration;
         const wave = Math.sin(cprCycle * Math.PI * 2) * (type === "ECG" ? 0.8 : 0.2);
-        const noise = (Math.random() - 0.5) * (type === "ECG" ? 0.2 : 0.05);
+        const noise = Math.sin(t * 55) * (type === "ECG" ? 0.05 : 0.01);
         return baseline - (wave + noise) * baseAmp;
       }
 
@@ -133,7 +139,8 @@ export function WaveformCanvas({
       if (r === 'SinusBrady' && !hasCapture) effectiveHR = Math.min(effectiveHR, 50);
       if (r === 'SinusTachy' && !hasCapture) effectiveHR = Math.max(effectiveHR, 110);
       if (r === 'SVT' && !hasCapture) effectiveHR = 180;
-      if (r === 'VT') effectiveHR = 180;
+      if (r === 'VT' && type === 'ECG') effectiveHR = 180;
+      if (r === 'Torsades' && type === 'ECG') effectiveHR = 220;
       if (r === 'CHB' && !hasCapture) effectiveHR = 40; // Ventricular escape
       
       const beatDuration = 60 / Math.max(10, effectiveHR);
@@ -146,43 +153,84 @@ export function WaveformCanvas({
 
       // Irregularity adjustments
       if (r === 'AFib') {
-         // Randomize beat duration slightly continuously based on timestamp block
-         const seed = Math.floor(t / 2);
-         const variation = (Math.sin(seed * 123.45) * 0.3) + 1; // 0.7x to 1.3x 
-         const adjDur = beatDuration * variation;
-         beatCycle = (t % adjDur) / adjDur;
+         // Smoothly varying "warp" of time to make R-R intervals continuously irregular without visual jumps
+         const timeWarp = Math.sin(t * 1.8) * 0.3 + Math.sin(t * 0.7) * 0.2; 
+         beatCycle = ((t + timeWarp) % beatDuration) / beatDuration;
+         if (beatCycle < 0) beatCycle += 1; // ensure positive cycle
       }
-      if (r === 'SinusArrest' && Math.floor(t / beatDuration) % 4 === 0) {
-         // Drop every 4th beat to simulate arrest
-         return type === "ECG" ? baseline + (Math.random()-0.5)*0.2 : baseline;
+
+      // AV Block logic overrides
+      let prOffset = 0;
+      let skipQRS = false;
+      let isPVCBeat = false;
+      
+      // Global PVC injection approx 7 times a minute (every ~8.5 seconds)
+      if (propsRef.current.isPVC && (t % 8.5) < beatDuration * 0.5) { // inject in first half of cycle Window
+          isPVCBeat = true;
       }
-      if (r === 'AVBlock2_II' && Math.floor(t / beatDuration) % 3 === 0) {
-         // Drop QRS every 3rd beat
-         beatCycle = -1; // Flag to skip QRS
+      
+      if (r === 'SinusArrest' && Math.floor(t / beatDuration) % 4 === 0) skipQRS = true;
+      
+      if (r === 'AVBlock1') {
+         prOffset = -0.12; // Severely prolonged PR
+      }
+      
+      if (r === 'AVBlock2_I') {
+         // Wenckebach: beat 1 normal, beat 2 prolonged, beat 3 more prolonged, beat 4 dropped (4 beat cycle)
+         const cycleIndex = Math.floor(t / beatDuration) % 4;
+         if (cycleIndex === 0) prOffset = 0;
+         else if (cycleIndex === 1) prOffset = -0.04;
+         else if (cycleIndex === 2) prOffset = -0.08;
+         else if (cycleIndex === 3) skipQRS = true;
+      }
+      
+      if (r === 'AVBlock2_II') {
+         // Constant PR, drops occasionally (every 3rd beat)
+         prOffset = 0;
+         if (Math.floor(t / beatDuration) % 3 === 0) skipQRS = true;
+      }
+
+      if (r === 'Bigeminy') {
+         // Wide QRS after normal beat
+         const cycleIndex = Math.floor(t / beatDuration) % 2;
+         if (cycleIndex === 1) isPVCBeat = true;
+      }
+      
+      if (skipQRS && !isPVCBeat) {
+          beatCycle = -1; // Flag skip QRS
       }
 
       if (r === 'Asystole') {
-        return baseline + (Math.random() - 0.5) * 2;
+        const slightWander = Math.sin(t * 0.5) * 1.5;
+        return baseline + slightWander;
       }
 
-      if (r === 'VF') {
-        // Chaotic multi-harmonic and random wave for true VF
+      if (r === 'VF' && type === 'ECG') {
+        // Chaotic multi-harmonic continuous wave for true VF without brush-thickening
         const wave1 = Math.sin(t * 10) * 0.4;
         const wave2 = Math.sin(t * 17.3 + 1.2) * 0.3;
         const wave3 = Math.sin(t * 23.1 + 0.5) * 0.2;
+        const wave4 = Math.sin(t * 43.5 + 2.1) * 0.15; // Smooth high-freq substitute for noise
         const wander = Math.sin(t * 2) * 0.3;
-        const chaoticNoise = (Math.random() - 0.5) * 0.4;
-        return baseline - (wave1 + wave2 + wave3 + wander + chaoticNoise) * baseAmp * 0.7;
+        return baseline - (wave1 + wave2 + wave3 + wave4 + wander) * baseAmp * 0.7;
       }
 
-      if (r === 'VT') {
-        const val = Math.sin(beatCycle * Math.PI * 2) * 0.8;
-        return baseline - (val * baseAmp);
+      if (r === 'VT' && type === 'ECG') {
+        // Deep, wide, continuous sine-like triangles
+        const val = Math.sin(beatCycle * Math.PI * 2) * 1.0;
+        // Sharpen the bottom curve slightly to look like VT complexes
+        const sharp = val < 0 ? val * 1.2 : val * 0.8; 
+        return baseline - (sharp * baseAmp);
       }
 
-      if (r === 'Torsades') {
-        const env = Math.sin(t * 0.5) * 0.5 + 0.5; // Envelope 0 to 1
-        const val = Math.sin((t % (60/180)) / (60/180) * Math.PI * 2) * (env * 0.8 + 0.2);
+      if (r === 'Torsades' && type === 'ECG') {
+        // Envelope oscillates to create twisting around the isoelectric line
+        const env = Math.sin(t * 1.2); 
+        // Base VT rate
+        const vtVal = Math.sin(beatCycle * Math.PI * 2);
+        const sharp = vtVal < 0 ? vtVal * 1.2 : vtVal * 0.8;
+        // Modulate amplitude and polarity
+        const val = sharp * env * 1.2;
         return baseline - (val * baseAmp);
       }
 
@@ -190,42 +238,37 @@ export function WaveformCanvas({
       if (type === "ECG") {
         let val = 0;
         
-        // P-wave Rendering (unless AFib, SVT, VF, VT, Torsades)
-        const skipP = ['AFib', 'SVT', 'VT', 'Torsades', 'VF'].includes(r);
-        if (!skipP) {
-           let prOffset = 0;
-           if (r === 'AVBlock1') prOffset = -0.05; // prolonged PR
-           if (r === 'AVBlock2_I') {
-              const bNum = Math.floor(t / beatDuration) % 4;
-              prOffset = -0.02 * bNum;
-              if (bNum === 3) beatCycle = -1; // Drop QRS
-           }
-           
+        // P-wave Rendering
+        const hidePWave = ['AFib', 'SVT', 'VT', 'Torsades', 'VF'].includes(r) || isPVCBeat;
+        if (!hidePWave) {
            const cycleToUse = ['CHB', 'AFlutter'].includes(r) ? atrialCycle : beatCycle;
            
            if (r === 'AFlutter') {
-              // Continuous sawtooth
-              val += Math.sin(cycleToUse * Math.PI * 6) * 0.2;
+              // 2 saw waves exactly per QRS requires flutter cycle exactly half of ventricular cycle
+              const fCycle = (t % (beatDuration / 2)) / (beatDuration / 2);
+              const saw = (fCycle < 0.2) ? -fCycle * 5 : (fCycle - 0.2) * 1.25; 
+              val += saw * 0.15; 
            } else {
               // Discrete P Wave
               const pStart = 0.0 + prOffset;
-              const pEnd = 0.1 + prOffset;
+              const pEnd = 0.10 + prOffset;
               if (cycleToUse >= pStart && cycleToUse < pEnd) {
-                 const pPhase = (cycleToUse - pStart) / 0.1;
+                 const pPhase = (cycleToUse - pStart) / 0.10;
                  val += Math.sin(pPhase * Math.PI) * 0.15;
               }
            }
         } else if (r === 'AFib') {
-           // F-waves
-           val += Math.sin(t * 20) * 0.05 + Math.sin(t * 35) * 0.03;
+           // F-waves (fibrillatory baseline)
+           val += Math.sin(t * 15) * 0.03 + Math.sin(t * 37.5) * 0.04 + Math.sin(t * 73) * 0.02;
         }
 
         // QRS Complex
         if (beatCycle >= 0) {
            let qrsWidth = 0.03;
-           if (r === 'BBB') qrsWidth = 0.08; // Widened QRS
-           if (r === 'PVC' && Math.floor(t/beatDuration)%5===0) qrsWidth = 0.08; // Occasional wide
-           if (r === 'Bigeminy' && Math.floor(t/beatDuration)%2===0) qrsWidth = 0.08;
+           if (r === 'SVT') qrsWidth = 0.04; // Widened slightly to not be a needle
+           if (r === 'CHB') qrsWidth = 0.06; // Wide QRS for ventricular escape
+           if (isPVCBeat) qrsWidth = 0.08; // Very wide
+           if (isWideQRS) qrsWidth += 0.04; // Globably widen if specific toggle is active
 
            const qStart = 0.12;
            const rStart = qStart + 0.02;
@@ -236,15 +279,18 @@ export function WaveformCanvas({
              val += -Math.sin(((beatCycle-qStart)/0.02) * Math.PI) * 0.15;
            } else if (beatCycle >= rStart && beatCycle < sStart) {
              const rPhase = (beatCycle - rStart) / qrsWidth;
-             val += Math.sin(rPhase * Math.PI) * (qrsWidth > 0.03 ? 1.5 : 1.0); // wide taller
+             val += Math.sin(rPhase * Math.PI) * (qrsWidth > 0.04 ? 1.5 : 1.0); // wide taller
            } else if (beatCycle >= sStart && beatCycle < sEnd) {
              val += -Math.sin(((beatCycle-sStart)/0.03) * Math.PI) * 0.25;
            } 
            
            // T wave
-           if (beatCycle >= 0.3 && beatCycle < 0.45) {
+           if (!isPVCBeat && beatCycle >= 0.3 && beatCycle < 0.45) {
              const tPhase = (beatCycle - 0.3) / 0.15;
-             val += Math.sin(tPhase * Math.PI) * (qrsWidth > 0.03 ? -0.4 : 0.2); // wide has inverted T
+             val += Math.sin(tPhase * Math.PI) * 0.2; // Identical normal T
+           } else if (isPVCBeat && beatCycle >= 0.3 && beatCycle < 0.45) {
+             const tPhase = (beatCycle - 0.3) / 0.15;
+             val += Math.sin(tPhase * Math.PI) * -0.4; // inverted T for PVC
            }
         }
 
@@ -331,10 +377,13 @@ export function WaveformCanvas({
       const rawDt = timestamp - lastTimestamp;
       lastTimestamp = timestamp;
       
+      const { speed, syncMode, cprActive, pacerActive, pacerRate, pacerOutput, heartRate, isVT, isVF, isAsystole, isPaused } = propsRef.current;
+      
       const dt = rawDt > 50 ? 16.66 : rawDt;
-      time += dt / 1000;
+      if (!isPaused) {
+         time += dt / 1000;
+      }
 
-      const { speed, syncMode, cprActive, pacerActive, pacerRate, pacerOutput, heartRate, isVT, isVF, isAsystole } = propsRef.current;
       const step = speed * (dt / 16.66); 
 
       const eraseWidth = Math.max(20, step + 1); 
@@ -352,8 +401,17 @@ export function WaveformCanvas({
       if (x === 0 || step > canvas.width / 2) {
         ctx.moveTo(x, newY);
       } else {
-        ctx.moveTo(x - step, lastY); 
-        ctx.lineTo(x, newY);
+        // High-frequency Sub-sampling (Oversampling) to prevent Aliasing 
+        // This ensures narrow QRS complexes hit their exact peak mathematically every time
+        const subSteps = type === "ECG" ? 8 : 2;
+        ctx.moveTo(x - step, lastY);
+        for (let i = 1; i <= subSteps; i++) {
+           const fraction = i / subSteps;
+           const subT = (time - dt / 1000) + (dt / 1000) * fraction;
+           const subY = generateY(subT);
+           const subX = (x - step) + step * fraction;
+           ctx.lineTo(subX, subY);
+        }
       }
       
       ctx.strokeStyle = color;

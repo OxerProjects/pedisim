@@ -95,6 +95,40 @@ export function ScenarioModal({ onClose, editScenario }: ScenarioModalProps) {
         setPhases(newPhases);
     };
 
+    const updatePhaseRhythm = (index: number, rhythm: string) => {
+        const newPhases = [...phases];
+        newPhases[index] = {
+            ...newPhases[index],
+            targetEmergencies: {
+                ...newPhases[index].targetEmergencies,
+                activeRhythm: rhythm,
+                isAsystole: rhythm === 'Asystole',
+                isVF: rhythm === 'VF',
+                isVT: rhythm === 'VT',
+                isPSVT: rhythm === 'SVT'
+            },
+        };
+        
+        // Auto-adjust default variables for specific rhythms
+        const overrides: Partial<Vitals> = {};
+        if (rhythm === 'VT') overrides.heartRate = 160;
+        if (rhythm === 'CHB') overrides.heartRate = 35;
+        if (rhythm === 'AFib') overrides.heartRate = 150;
+        if (rhythm === 'AFlutter') overrides.heartRate = 100;
+        if (rhythm === 'AVBlock1') overrides.heartRate = 60;
+        if (rhythm === 'Torsades') {
+            overrides.heartRate = 220;
+            overrides.spO2 = 82;
+            overrides.showSpO2 = false; 
+        }
+        
+        if (Object.keys(overrides).length > 0) {
+           newPhases[index].targetVitals = { ...newPhases[index].targetVitals, ...overrides };
+        }
+        
+        setPhases(newPhases);
+    };
+
     return (
         <div
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
@@ -195,20 +229,48 @@ export function ScenarioModal({ onClose, editScenario }: ScenarioModalProps) {
                                         ))}
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xs text-gray-400">
-                                            {lang === 'HE' ? 'השהייה (שניות):' : 'Delay (sec):'}
-                                        </span>
-                                        <select
-                                            value={p.delay}
-                                            onChange={(e) => updatePhase(idx, { delay: Number(e.target.value) })}
-                                            className="bg-black border border-gray-800 rounded p-1 text-white text-xs outline-none"
-                                        >
-                                            <option value={0}>0 (Immediate)</option>
-                                            <option value={5}>5</option>
-                                            <option value={10}>10</option>
-                                            <option value={30}>30</option>
-                                        </select>
+                                    <div className="flex items-center gap-4 border-t border-gray-800 pt-3 mt-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-gray-400">
+                                                {lang === 'HE' ? 'השהייה (שניות):' : 'Delay (sec):'}
+                                            </span>
+                                            <select
+                                                value={p.delay}
+                                                onChange={(e) => updatePhase(idx, { delay: Number(e.target.value) })}
+                                                className="bg-black border border-gray-800 rounded p-1 text-white text-xs outline-none"
+                                            >
+                                                <option value={0}>0 (Immediate)</option>
+                                                <option value={5}>5</option>
+                                                <option value={10}>10</option>
+                                                <option value={30}>30</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-gray-400">
+                                                {lang === 'HE' ? 'הפרעת קצב:' : 'Arrhythmia:'}
+                                            </span>
+                                            <select
+                                                value={p.targetEmergencies?.activeRhythm || 'NSR'}
+                                                onChange={(e) => updatePhaseRhythm(idx, e.target.value)}
+                                                className="bg-black border border-gray-800 rounded p-1 text-white text-xs outline-none w-32"
+                                            >
+                                               <option value="NSR">NSR</option>
+                                               <option value="SinusBrady">Sinus Brady</option>
+                                               <option value="SinusTachy">Sinus Tachy</option>
+                                               <option value="AVBlock1">AV Block 1°</option>
+                                               <option value="AVBlock2_I">AV Block 2° Wenckebach</option>
+                                               <option value="AVBlock2_II">AV Block 2° Type II</option>
+                                               <option value="CHB">AV Block 3° (CHB)</option>
+                                               <option value="AFib">AFib</option>
+                                               <option value="AFlutter">AFlutter</option>
+                                               <option value="SVT">SVT</option>
+                                               <option value="VT">VT</option>
+                                               <option value="VF">VF</option>
+                                               <option value="Torsades">Torsades</option>
+                                               <option value="PEA">PEA</option>
+                                               <option value="Asystole">Asystole</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             ))}

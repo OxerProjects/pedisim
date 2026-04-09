@@ -11,6 +11,13 @@ export interface Vitals {
   abpDia: number;
   map: number;
   temp: number;
+  showHR?: boolean;
+  showSpO2?: boolean;
+  showPCO2?: boolean;
+  showRR?: boolean;
+  showNIBP?: boolean;
+  showABP?: boolean;
+  showTemp?: boolean;
 }
 
 export interface EmergencyState {
@@ -19,19 +26,23 @@ export interface EmergencyState {
   isVF: boolean;
   isPSVT: boolean;
   isPEA: boolean; // Pulseless Electrical Activity
+  isPVC: boolean; // Global PVC toggle
+  isPaused: boolean; // Freezes the monitor rendering
   manualExtremeAlert: boolean;
   scenarioEndedFlag: boolean;
+  showProtocols?: boolean;
+  isWideQRS?: boolean;
   activeRhythm?: string;
 }
 
 export const checkAlarms = (vitals: Vitals) => {
   return {
-    hr: vitals.heartRate < 50 || vitals.heartRate > 150,
-    spo2: vitals.spO2 < 94,
-    nibpSys: vitals.nibpSys < 80,
-    nibpDia: vitals.nibpDia < 40,
-    map: vitals.map < 65,
-    temp: vitals.temp < 35 || vitals.temp > 40,
+    hr: vitals.showHR !== false && (vitals.heartRate < 50 || vitals.heartRate > 150),
+    spo2: vitals.showSpO2 !== false && (vitals.spO2 < 94),
+    nibpSys: vitals.showNIBP !== false && (vitals.nibpSys < 80),
+    nibpDia: vitals.showNIBP !== false && (vitals.nibpDia < 40),
+    map: (vitals.showABP !== false || vitals.showNIBP !== false) ? (vitals.map < 65) : false,
+    temp: vitals.showTemp !== false && (vitals.temp < 35 || vitals.temp > 40),
   };
 };
 
@@ -63,6 +74,13 @@ const defaultVitals: Vitals = {
   abpDia: 0,
   map: 70,
   temp: 37.0,
+  showHR: true,
+  showSpO2: true,
+  showPCO2: true,
+  showRR: true,
+  showNIBP: true,
+  showABP: true,
+  showTemp: true,
 };
 
 const defaultEmergencies: EmergencyState = {
@@ -71,6 +89,8 @@ const defaultEmergencies: EmergencyState = {
   isVF: false,
   isPSVT: false,
   isPEA: false,
+  isPVC: false,
+  isPaused: false,
   manualExtremeAlert: false,
   scenarioEndedFlag: false,
   activeRhythm: 'NSR',

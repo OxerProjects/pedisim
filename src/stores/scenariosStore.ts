@@ -9,6 +9,7 @@ export interface ImagingItem {
   type: string; // 'ECG' | 'CT' | 'XRAY' | 'US'
   category?: string;
   isCustom?: boolean;
+  rawName?: string;
 }
 
 export interface Phase {
